@@ -4,6 +4,23 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve simple HTML
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+            <head><title>DevOps Midterm App</title></head>
+            <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+                <h1>Welcome to DevOps Midterm Blue-Green App!</h1>
+                <p>Environment: <strong>Production</strong></p>
+                <form action="/submit" method="POST">
+                    <input type="text" name="data" placeholder="Enter some data" required />
+                    <button type="submit">Submit</button>
+                </form>
+            </body>
+        </html>
+    `);
+});
+
 // Dynamic Route
 app.get('/user/:name', (req, res) => {
     const name = req.params.name;
