@@ -19,7 +19,7 @@ const server = http.createServer((req, res) => {
         console.error("Error reading config, falling back to 8001", err);
     }
     
-    proxy.web(req, res, { target: `http://127.0.0.1:${targetPort}` }, (e) => {
+    proxy.web(req, res, { target: `http://127.0.0.1:${targetPort}` }, () => {
         res.writeHead(502);
         res.end("Bad Gateway: Target application is down.");
     });
