@@ -15,7 +15,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "http-proxy": "^1.18.1"
   },
   "devDependencies": {
     "eslint": "^8.57.0",
