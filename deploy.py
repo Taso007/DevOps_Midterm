@@ -28,7 +28,6 @@ def main():
     print(f"Deploying to Target Env: {target_env} (Port {target_port})...")
     
     # 3. Start target application
-    # Note: On Windows, we use `start` to run it in a new background command window
     env = os.environ.copy()
     env["PORT"] = str(target_port)
     env["NODE_ENV"] = "production"
@@ -36,9 +35,28 @@ def main():
     # Start the node server in the background
     subprocess.Popen(["node", "server.js"], env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
     
-    print(f"Application started on port {target_port}. Waiting for it to initialize...")
-    time.sleep(3) # Wait for app to be ready
+    print(f"Application started on port {target_port}. Verifying health...")
     
+    # Health check loop
+    import urllib.request
+    max_retries = 5
+    is_healthy = False
+    
+    for i in range(max_retries):
+        try:
+            time.sleep(2)
+            print(f"Health check attempt {i+1}/{max_retries}...")
+            with urllib.request.urlopen(f"http://127.0.0.1:{target_port}/health", timeout=2) as response:
+                if response.getcode() == 200:
+                    is_healthy = True
+                    break
+        except Exception:
+            continue
+            
+    if not is_healthy:
+        print("Error: Target environment failed health check. Deployment aborted.")
+        sys.exit(1)
+        
     # 4. Switch Proxy Traffic
     new_config = {"port": target_port, "env": target_env}
     with open(CONFIG_FILE, 'w') as f:

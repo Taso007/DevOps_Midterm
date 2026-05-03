@@ -27,6 +27,18 @@ app.get('/user/:name', (req, res) => {
     res.status(200).json({ message: `Hello, ${name}!` });
 });
 
+// Logs for monitoring 
+const fs = require('fs');
+const path = require('path');
+app.get('/logs', (req, res) => {
+    const logPath = path.join(__dirname, 'logs', 'health.log');
+    if (fs.existsSync(logPath)) {
+        res.type('text/plain').send(fs.readFileSync(logPath, 'utf8'));
+    } else {
+        res.send('No logs found.');
+    }
+});
+
 // Input form/endpoint
 app.post('/submit', (req, res) => {
     const { data } = req.body;
