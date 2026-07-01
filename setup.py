@@ -21,13 +21,19 @@ def main():
         else:
             print(f"Directory {d} already exists")
             
-    # 2. Create default configuration if not exists
+    # 2. Create default configuration if not exists.
+    #    Prefer copying the tracked template so local and Docker stay in sync.
     env_file = ".env"
     if not os.path.exists(env_file):
-        with open(env_file, "w") as f:
-            f.write("PORT=3000\n")
-            f.write("NODE_ENV=development\n")
-        print("Created .env file")
+        if os.path.exists(".env.example"):
+            import shutil
+            shutil.copy(".env.example", env_file)
+            print("Created .env from .env.example")
+        else:
+            with open(env_file, "w") as f:
+                f.write("PORT=3000\n")
+                f.write("NODE_ENV=development\n")
+            print("Created .env file")
     else:
         print(".env already exists")
         

@@ -1,3 +1,14 @@
+# Node
 node_modules
-.env
 coverage
+npm-debug.log
+
+# Environment & secrets (never commit real secrets — use .env.example)
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
