@@ -1,27 +1,60 @@
-name: Node.js CI
+name: CI
 
+# Continuous Integration + build verification.
+#  1. quality           - lint, unit tests (Node 18 & 20)
+#  2. build-and-verify  - build the Docker image, run it, and smoke-test it
+#                         (automated deployment verification) before it can be
+#                         considered deployable.
+# Security scanning runs in a dedicated workflow (.github/workflows/security.yml).
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-
+  quality:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
-        node-version: [18.x]
-
+        node-version: [18.x, 20.x]
     steps:
-    - uses: actions/checkout@v4
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    - run: npm ci
-    - run: npm run lint
-    - run: npm test
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm run test:ci
+
+  build-and-verify:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t devops-final-app:ci .
+
+      - name: Start container
+        run: |
+          docker run -d --name app -e PORT=3000 -p 3000:3000 devops-final-app:ci
+          echo "Waiting for container health..."
+
+      - name: Deployment verification (smoke test)
+        run: python3 smoke_test.py --url http://127.0.0.1:3000 --retries 20 --delay 2
+
+      - name: Container logs (always)
+        if: always()
+        run: docker logs app || true
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f app || true
