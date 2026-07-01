@@ -1,0 +1,21 @@
+# Gitleaks configuration — secrets scanning.
+# Uses the full set of built-in rules and adds a small allowlist for files that
+# legitimately contain placeholder/non-secret values.
+title = "DevOps Final — gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow documented placeholders and demo defaults"
+paths = [
+  '''\.env\.example$''',
+  '''README\.md$''',
+  '''(^|/)screenshots/''',
+  '''(^|/)docs/''',
+]
+# The local-demo Grafana default 'admin/admin' is documented, not a real secret.
+regexes = [
+  '''GF_SECURITY_ADMIN_PASSWORD=admin''',
+  '''GRAFANA_ADMIN_PASSWORD=admin''',
+]

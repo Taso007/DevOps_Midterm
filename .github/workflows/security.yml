@@ -1,0 +1,81 @@
+name: Security
+
+# Security automation: secrets, dependencies, Dockerfile, IaC/config and
+# container-image scanning. Runs on every push/PR and on a weekly schedule so
+# newly-disclosed CVEs are caught even without code changes. All scanners run
+# as pinned containers — identical to scripts/security_scan.sh.
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main", "dev"]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Dependency vulnerability scanning (gating on HIGH+ in production deps)
+  # -------------------------------------------------------------------------
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: "npm"
+      - run: npm ci
+      - name: npm audit (production, high+)
+        run: npm audit --omit=dev --audit-level=high
+
+  # -------------------------------------------------------------------------
+  # Secrets scanning (gating)
+  # -------------------------------------------------------------------------
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" \
+            zricethezav/gitleaks:latest \
+            detect --source=/repo --config=/repo/.gitleaks.toml --no-git -v --redact
+
+  # -------------------------------------------------------------------------
+  # Dockerfile linting + IaC/config misconfiguration (gating)
+  # -------------------------------------------------------------------------
+  dockerfile-iac-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint (Dockerfile)
+        run: docker run --rm -i hadolint/hadolint < Dockerfile
+      - name: Trivy config (Dockerfile, compose, yaml misconfig)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" \
+            aquasec/trivy:latest config --exit-code 1 \
+            --severity HIGH,CRITICAL /src
+
+  # -------------------------------------------------------------------------
+  # Filesystem + container-image CVE scanning (report-only: upstream base-image
+  # CVEs should alert, not block every deploy). Findings appear in the job log.
+  # -------------------------------------------------------------------------
+  image-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t devops-final-app:ci .
+      - name: Trivy filesystem (deps + secrets)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" \
+            aquasec/trivy:latest fs --scanners vuln,secret \
+            --severity HIGH,CRITICAL --exit-code 0 /src
+      - name: Trivy image (CVEs)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image --severity HIGH,CRITICAL \
+            --exit-code 0 devops-final-app:ci
