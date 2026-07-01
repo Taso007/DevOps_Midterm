@@ -1,0 +1,54 @@
+groups:
+  - name: app-availability
+    rules:
+      # Page if a scraped application instance stops responding.
+      - alert: AppInstanceDown
+        expr: up{job="app"} == 0
+        for: 30s
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "CRITICAL: Application instance {{ $labels.slot }} is down"
+          description: "Prometheus has been unable to scrape {{ $labels.instance }} (slot {{ $labels.slot }}) for 30s."
+
+      # Page if BOTH blue and green are down — full outage, no healthy slot.
+      - alert: AllInstancesDown
+        expr: sum(up{job="app"}) == 0
+        for: 30s
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "CRITICAL: All application instances are down"
+          description: "Neither the blue nor green instance is reachable. The service is fully down."
+
+  - name: app-errors-latency
+    rules:
+      # Original Observability-lab alert: a spike of errors in one minute.
+      - alert: CriticalHighErrorRate
+        expr: increase(app_errors_total[1m]) > 5
+        for: 0m
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "CRITICAL: Application error rate is too high"
+          description: "The application generated more than 5 errors in the last minute."
+
+      # Sustained elevated error rate (warning, ahead of the critical spike).
+      - alert: ElevatedErrorRate
+        expr: sum(rate(app_errors_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: WARNING
+        annotations:
+          summary: "WARNING: Sustained elevated error rate"
+          description: "The 5-minute error rate has stayed above 0.1 errors/sec for 2 minutes."
+
+      # SLO guard: p95 request latency above 500ms breaches the latency objective.
+      - alert: HighRequestLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(app_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 2m
+        labels:
+          severity: WARNING
+        annotations:
+          summary: "WARNING: p95 latency above the 500ms SLO"
+          description: "95th-percentile request latency has exceeded 500ms for 2 minutes."
