@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+coverage
+.git
+.github
+.env
+logs/*.log
+screenshots
+docs
+*.md
+.eslintrc.js
+.eslintignore
+.gitleaks.toml
