@@ -1,236 +1,430 @@
-# DevOps Midterm Project
+# DevOps Final Project — Secure, Automated & Reliable Delivery
 
-A Node.js web application for the DevOps midterm project, which includes CI, Infrastructure as Code, Blue-Green Deployment, Rollback, and Monitoring. The application itself is a dynamic web app built with Express. All pipeline components, from environment setup to traffic switching, are implemented as Python automation scripts to ensure full automation and environment consistency.
+A production-style DevOps project for a Node.js / Express web application. It
+extends the midterm (CI, IaC automation, blue-green deployment, rollback,
+monitoring) and **consolidates every feature built across the semester** into a
+single reproducible stack, then hardens it with **environment automation,
+security automation, reliability improvements, and a stronger CI/CD pipeline**.
 
 **Repository:** `https://github.com/Taso007/DevOps_Midterm`
 
+> **One command to run everything:**
+> ```bash
+> docker compose up -d --build      # or: ./scripts/bootstrap.sh  (bash)
+> ```                                #     .\scripts\bootstrap.ps1 (Windows)
+
 ---
 
-## Tech Stack
+## Table of Contents
+
+1. [What was carried forward](#what-was-carried-forward)
+2. [Architecture](#architecture)
+3. [Tech stack](#tech-stack)
+4. [Repository structure](#repository-structure)
+5. [Environment setup (single command)](#environment-setup)
+6. [Deployment workflow](#deployment-workflow)
+7. [Security implementation](#security-implementation)
+8. [Monitoring, logging & observability](#monitoring-logging--observability)
+9. [Reliability improvements](#reliability-improvements)
+10. [Automation improvements](#automation-improvements)
+11. [Application endpoints](#application-endpoints)
+12. [Branching strategy](#branching-strategy)
+13. [Screenshots](#screenshots)
+
+---
+
+## What was carried forward
+
+This project intentionally keeps **all previously implemented functionality
+fully operational** and merges three assignments into one solution:
+
+| Source | Feature | Where it lives now |
+|--------|---------|--------------------|
+| Assignment 1 | CI + **Feature Flag** release strategy | `.github/workflows/ci.yml`, `featureFlags.js`, `/` route |
+| Assignment 2 | **Docker Compose**, **Prometheus + Grafana**, **ELK logging**, **alerting** | `docker-compose.yml`, `prometheus/`, `grafana/`, `logstash/` |
+| Midterm | **Blue-green deployment**, **rollback**, **IaC automation**, health checks, reverse proxy | `deploy.py`, `rollback.py`, `setup.py`, `proxy.js`, `/health` |
+
+Everything above still works, and the new requirements are layered on top.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    Dev[Developer push / PR] --> CI[GitHub Actions]
+    CI -->|lint, test, build, smoke-test| Q{Quality + verify pass?}
+    CI -->|gitleaks, npm audit, trivy, hadolint| S{Security pass?}
+    Q --> Deployable[Deployable image]
+    S --> Deployable
+
+    subgraph Stack["Docker Compose stack (single command)"]
+        Proxy["Reverse Proxy :8000<br/>routes to active slot"]
+        Blue["app-blue :8001<br/>/metrics + JSON logs"]
+        Green["app-green :8002<br/>/metrics + JSON logs"]
+        Proxy --> Blue
+        Proxy --> Green
+
+        Blue -- scrape --> Prom["Prometheus :9090<br/>+ alert rules"]
+        Green -- scrape --> Prom
+        Prom --> Graf["Grafana :3001"]
+
+        Blue -- gelf JSON --> LS["Logstash :12201"]
+        Green -- gelf JSON --> LS
+        LS --> ES["Elasticsearch :9200"]
+        ES --> Kib["Kibana :5601"]
+    end
+
+    Deployable --> Stack
+    Deploy[deploy.py / rollback.py] -->|flip active_env.json| Proxy
+    Monitor[monitor.py / smoke_test.py] -->|health + verify| Proxy
+```
+
+**Traffic flow:** a single reverse proxy on `:8000` is the public entrypoint and
+forwards to whichever slot (`app-blue` or `app-green`) is marked active in
+`config/active_env.json`. `deploy.py` and `rollback.py` switch traffic by
+flipping that file — the proxy honours it live, with no restart, in **both**
+local and Docker modes.
+
+---
+
+## Tech stack
 
 | Category | Tools |
 |---|---|
-| **Application** | Node.js, Express.js |
-| **Testing** | Jest, Supertest |
-| **Linting** | ESLint |
-| **CI/CD** | GitHub Actions |
-| **IaC / Automation** | Python 3.10+ |
-| **Reverse Proxy** | Node.js `http-proxy` |
-| **OS Environment** | Windows (Dev), Ubuntu (CI/Runner) |
-| **Monitoring** | Python + Health Endpoint |
+| Application | Node.js 20, Express |
+| Metrics / logging libs | `prom-client`, `pino` |
+| Testing / linting | Jest, Supertest, ESLint |
+| Containers | Docker, Docker Compose |
+| Metrics & dashboards | Prometheus, Grafana |
+| Logging (ELK) | Elasticsearch, Logstash, Kibana |
+| IaC / automation | Python 3 (`setup.py`, `deploy.py`, `rollback.py`, `monitor.py`, `validate_env.py`, `smoke_test.py`) |
+| CI/CD | GitHub Actions |
+| Security | Gitleaks, npm audit, Trivy (image/fs/config), Hadolint |
+| Reverse proxy | Node `http-proxy` |
 
 ---
 
-## Workflow Diagram
-
-```mermaid
-graph TD
-    A[Developer Pushes Code] -->|GitHub Actions| B(CI Pipeline: Lint & Test)
-    B --> C{Tests Pass?}
-    C -->|Yes| D[Ready for Deployment]
-    C -->|No| E[Block Merge]
-    
-    D -->|python deploy.py| F[Identify Inactive Env]
-    F --> G[Start Node App on Port 8001/8002]
-    G --> H[Update active_env.json config]
-    H --> I((Live Production Traffic))
-    
-    J[python monitor.py] -.->|Pings Health Route| I
-```
-
----
-
-## Project Structure
+## Repository structure
 
 ```
 DevOps_Midterm/
-├── app.js                # Express application logic
-├── server.js             # Server entry point
-├── proxy.js              # Node.js Reverse Proxy (Traffic Manager)
-├── setup.py              # IaC environment setup automation
-├── deploy.py             # Blue-Green deployment simulation
-├── rollback.py           # Rollback to previous version
-├── monitor.py            # Monitoring periodic health checks
-├── app.test.js           # Automated unit tests
-├── package.json          # Node dependencies and scripts
-├── .env                  # Environment variables
-├── config/
-│   └── active_env.json   # Tracks currently active port
+├── app.js                     # Express app: routes + metrics + JSON logging + feature flag
+├── server.js                  # App entrypoint
+├── proxy.js                   # Reverse proxy (local + Docker modes)
+├── featureFlags.js            # Feature-flag helper (Assignment 1)
+├── app.test.js                # Jest/Supertest tests (incl. /metrics, /error)
+├── Dockerfile                 # Hardened multi-stage, non-root, healthcheck
+├── .dockerignore
+├── docker-compose.yml         # Full stack: blue/green app, proxy, Prometheus, Grafana, ELK
+├── .env.example               # Config/secrets template (real .env is git-ignored)
+├── Makefile                   # Convenience targets (setup/up/test/security/deploy…)
+├── setup.py                   # Local IaC environment setup
+├── validate_env.py            # Environment validation (tools, files, ports, compose)
+├── deploy.py                  # Blue-green deploy + auto post-deploy verification + auto-rollback
+├── rollback.py                # Safe rollback with health gate
+├── monitor.py                 # Continuous health monitor -> logs/health.log
+├── smoke_test.py              # Deployment verification (used by bootstrap, deploy, CI)
+├── config/active_env.json     # Active slot (drives the proxy)
+├── prometheus/
+│   ├── prometheus.yml         # Scrape config (blue + green)
+│   └── alerts.yml             # Availability, error-rate & latency alerts
+├── grafana/provisioning/      # Datasource + dashboard (auto-provisioned)
+├── logstash/pipeline/         # JSON log parsing pipeline
+├── scripts/
+│   ├── bootstrap.sh           # One-command setup (bash)
+│   ├── bootstrap.ps1          # One-command setup (PowerShell)
+│   └── security_scan.sh       # Full local security scan via Docker
+├── docs/
+│   ├── RUNBOOK.md             # Incident response runbook
+│   └── SLO.md                 # Service level objectives
 ├── .github/workflows/
-│   └── ci.yml            # GitHub Actions pipeline
-├── logs/                 # Monitoring and health logs
-└── screenshots/          # Documentation assets
+│   ├── ci.yml                 # Lint, test, build, deployment verification
+│   └── security.yml           # Secrets, deps, Dockerfile, IaC & image scanning
+├── logs/                      # Health-monitor logs
+└── screenshots/               # Evidence
 ```
 
 ---
 
-## Prerequisites
+## Environment setup
 
-- **Node.js** (v18+)
-- **Python** (v3.8+)
-- **Git**
+> **Requirements:** Docker + Docker Compose (Docker Desktop on Windows/macOS).
+> Node.js and Python are only needed for the optional *local* (non-Docker) mode.
+> No paid services — everything runs locally with free, open-source tools.
 
----
-
-## Setup Instructions
-
-### Step 1: Clone the repository
+### Option A — Full stack with one command (recommended)
 
 ```bash
 git clone https://github.com/Taso007/DevOps_Midterm.git
 cd DevOps_Midterm
+
+# bash / Linux / macOS / Git-Bash
+./scripts/bootstrap.sh
+
+# Windows PowerShell
+.\scripts\bootstrap.ps1
 ```
 
-### Step 2: Run automated environment setup (IaC)
+The bootstrap script is fully automated and reproducible:
+1. creates `.env` from `.env.example` if missing,
+2. runs `validate_env.py` (checks tools, required files, ports, and validates the compose file),
+3. `docker compose up -d --build`,
+4. runs `smoke_test.py` to **verify** the deployment.
+
+Or skip the wrapper and run the single command directly:
 
 ```bash
-python setup.py
+docker compose up -d --build
 ```
 
-This script creates the necessary directory structure (`logs/`, `config/`), generates default configuration files (`.env`, `active_env.json`), and **automatically executes `npm install`** to set up all application dependencies.
+Give the stack ~1–2 minutes (Elasticsearch/Kibana are slowest), then open:
 
-![IaC Setup](screenshots/automated_environment_setup.png)
-
-### Step 3: Start the Reverse Proxy
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| App (via proxy) | http://localhost:8000 | – |
+| app-blue / app-green | http://localhost:8001 / http://localhost:8002 | – |
+| Prometheus | http://localhost:9090 | – |
+| Grafana | http://localhost:3001 | `admin` / `admin` (override in `.env`) |
+| Kibana | http://localhost:5601 | – |
+| Elasticsearch | http://localhost:9200 | – |
 
 ```bash
-node proxy.js
+docker compose ps          # check container + health status
+docker compose down        # stop (keep data)
+docker compose down -v     # stop + remove volumes
 ```
 
-The proxy listens on port **8000** and forwards traffic to the active application slot (8001 or 8002).
+### Option B — Local mode (no Docker)
+
+```bash
+python setup.py            # creates dirs, .env, config; runs npm install
+node proxy.js              # reverse proxy on :8000  (terminal 1)
+python deploy.py           # starts an app slot + verifies + switches traffic (terminal 2)
+python monitor.py          # continuous health monitoring (terminal 3)
+```
 
 ---
 
-## Running Tests Locally
+## Deployment workflow
 
-Run automated unit tests and linting to ensure code quality:
-
-```bash
-npm test
-npm run lint
-```
-
-All tests must pass and the linter should report zero errors before deployment.
-
-![running_tests](screenshots/running_tests.png)
----
-
-## CI Pipeline
-
-The GitHub Actions workflow at `.github/workflows/ci.yml` runs automatically on every push and pull request targeting `main` or `dev`. It:
-
-1. Checks out the code on a `ubuntu-latest` runner.
-2. Sets up the Node.js environment.
-3. Installs dependencies using `npm ci`.
-4. Runs `npm run lint` to enforce code style.
-5. Runs `npm test` to verify application logic.
-
-![CI Pipeline Success](screenshots/github_actions_ci_success.png)
----
-
-## Blue-Green Deployment
-
-The project uses a blue-green deployment strategy to minimize downtime. Two application instances run in parallel:
-
-- **Blue** - App instance on port 8001
-- **Green** - App instance on port 8002
-
-### Deploy a new version
+The project uses a **blue-green** strategy: two identical instances (`blue` on
+8001, `green` on 8002) run in parallel and the proxy serves only the active one.
 
 ```bash
-python deploy.py
+python deploy.py     # deploy to the inactive slot, verify, then switch traffic
+python rollback.py   # instantly revert traffic to the previous slot
 ```
 
-This script:
-1. Identifies the currently inactive slot.
-2. Starts the new version of the app on the inactive port in the background.
-3. Waits for the new instance to initialize.
-4. Seamlessly updates `config/active_env.json` to flip production traffic to the new version.
+`deploy.py` now performs a **fully automated, verified deployment**:
 
-Successfull deployment output:
-![Successful Deployment](screenshots/successful_deployment.png)
+1. Detects the inactive slot and starts the new version there.
+2. Health-checks the new instance (5 attempts against `/health`).
+3. Flips `config/active_env.json` so the proxy sends live traffic to it.
+4. **Post-deployment verification** — runs `smoke_test.py` through the proxy.
+5. **Auto-rollback** — if verification fails, it automatically restores the
+   previous slot so users never see the broken release.
 
-Unsuccessful deployment output:
-![Unsuccessful Deployment](screenshots/unsuccessful_deployment.png)
-
-*Note: The deployment script performs 5 health check attempts against the new instance's `/health` endpoint. If all attempts fail (e.g., due to a crash or bug), the deployment is aborted and the production traffic is **not** switched, ensuring the live site remains stable.*
+In Docker mode both slots are always running, so a deploy/rollback is just the
+instant config flip that the proxy honours live.
 
 ---
 
-## Rollback
+## Security implementation
 
-If a new deployment causes issues, the rollback script immediately reverts traffic to the previous stable version.
+Security is automated and integrated into the pipeline ([`security.yml`](.github/workflows/security.yml))
+and reproducible locally ([`scripts/security_scan.sh`](scripts/security_scan.sh)).
+All tools are free and open-source.
+
+| Area | Tool | What it does | Gating? |
+|------|------|--------------|---------|
+| **Secrets scanning** | Gitleaks | Scans the tree for committed secrets/keys (`.gitleaks.toml`) | blocks |
+| **Dependency scanning** | `npm audit` | Fails on HIGH+ vulns in production deps | blocks |
+| **Dockerfile security** | Hadolint | Lints the Dockerfile for unsafe practices | blocks |
+| **IaC / config scanning** | Trivy `config` | Misconfigurations in Dockerfile / compose / YAML | blocks (HIGH,CRITICAL) |
+| **Filesystem scanning** | Trivy `fs` | Vulnerable deps + leaked secrets | report |
+| **Container image scanning** | Trivy `image` | CVEs in the built image | report |
+
+**Other security measures built in:**
+
+- **Secrets management** — no secrets in git. Configuration lives in `.env`
+  (git-ignored); only the non-secret `.env.example` template is committed.
+  Grafana credentials and the feature flag are injected via environment.
+- **Hardened container** — multi-stage build, production-only dependencies
+  (`npm ci --omit=dev`), runs as the **non-root** `node` user, minimal
+  `node:20-alpine` base, and a built-in `HEALTHCHECK`.
+- **Applied fix demonstrated** — `npm audit fix` reduced the dependency tree
+  from 5 known vulnerabilities to **0** while keeping all tests green.
+
+Run the whole suite locally (everything runs as throwaway Docker containers, no
+installs needed):
 
 ```bash
-python rollback.py
+bash scripts/security_scan.sh        # or: make security
 ```
 
-This script flips the active port in the configuration back to the previous environment, ensuring instant recovery without needing a full rebuild. It includes a **Safety Health Check** that verifies the target environment is healthy before switching traffic, preventing "false rollbacks" to broken versions.
+> **Windows:** run this from a **Git Bash** shell — in PowerShell a bare `bash`
+> launches WSL, not Git Bash. From PowerShell you can call Git Bash directly:
+> `& "C:\Program Files\Git\bin\bash.exe" scripts/security_scan.sh`
 
-![Rollback Output](screenshots/rollback_output.png)
+> **Gating policy:** secrets, dependency (HIGH+), Dockerfile and IaC
+> misconfiguration findings **fail the pipeline**. Image/filesystem CVE scans are
+> *report-only* so a freshly-disclosed upstream base-image CVE alerts the team
+> without blocking every unrelated deploy — a deliberate, production-sane choice.
 
 ---
 
-## Monitoring & Health Check
+## Monitoring, logging & observability
 
-The `monitor.py` script runs a continuous health check loop, hitting the `/health` endpoint via the proxy and logging the results.
+### Metrics (Prometheus + Grafana)
+
+The app exposes Prometheus metrics at `/metrics` via `prom-client`:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `app_requests_total` | Counter | Every HTTP request (`method`, `path`, `status_code`) |
+| `app_errors_total` | Counter | Errors (`/error` + unhandled), labelled by `path` |
+| `app_request_duration_seconds` | Histogram | Request latency (drives p95 SLO) |
+| Node.js defaults | – | CPU, memory, event-loop, GC |
+
+Prometheus scrapes **both** slots (labelled `slot=blue|green`). Grafana
+auto-provisions a datasource and the **"DevOps Final — App Dashboard"** with
+panels for instance up/down, requests, error rate, request rate, and p95 latency.
+
+### Logging (ELK)
+
+- The app emits **one structured JSON log object per line** to stdout (`pino`):
+  `timestamp, level, service, method, path, statusCode, message`.
+- Docker's **gelf** logging driver ships each line to **Logstash** (UDP 12201).
+- Logstash parses the JSON into searchable `app.*` fields and writes daily
+  indices `app-logs-YYYY.MM.dd` to **Elasticsearch**.
+- Explore in **Kibana** (data view `app-logs-*`), e.g. `app.statusCode: 500`.
+
+### Alerting
+
+Prometheus rules in [`prometheus/alerts.yml`](prometheus/alerts.yml):
+
+| Alert | Severity | Fires when |
+|-------|----------|-----------|
+| `AppInstanceDown` | CRITICAL | a slot stops being scrapeable for 30s |
+| `AllInstancesDown` | CRITICAL | both slots are down (full outage) |
+| `CriticalHighErrorRate` | CRITICAL | > 5 errors in one minute |
+| `ElevatedErrorRate` | WARNING | sustained error rate for 2m |
+| `HighRequestLatencyP95` | WARNING | p95 latency > 500ms for 2m |
+
+**Trigger the critical alert (demo):**
 
 ```bash
-python monitor.py
+# bash
+for i in $(seq 1 10); do curl -s http://localhost:8000/error > /dev/null; done
+# PowerShell
+1..10 | ForEach-Object { curl.exe http://localhost:8000/error }
 ```
-![Running Monitor](screenshots/running_monitor.png)
 
-To inspect the logs:
-```bash
-cat logs/health.log
-```
-![Monitoring Logs](screenshots/monitoring_logs.png)
+Within ~30s `CriticalHighErrorRate` moves to **Firing** in Prometheus
+(http://localhost:9090/alerts) and is visible in Grafana.
 
 ---
 
-## Application Routes Reference
+## Reliability improvements
+
+- **Service health monitoring** — `/health` endpoint, Docker `HEALTHCHECK` on the
+  app and proxy, and `monitor.py` continuously logging to `logs/health.log`.
+- **Rollback procedure** — `rollback.py` reverts traffic instantly and includes a
+  **safety health gate** that refuses to roll onto an unhealthy slot.
+- **Failure-recovery automation** — `deploy.py` auto-rolls-back when
+  post-deployment verification fails; all containers use `restart: unless-stopped`.
+- **Improved alerting strategy** — added availability and latency alerts plus
+  WARNING-before-CRITICAL tiers (see table above), backed by SLOs.
+- **Service availability objectives** — documented in [`docs/SLO.md`](docs/SLO.md)
+  (99.5% availability, p95 < 500ms, error budget policy).
+- **Incident response documentation** — [`docs/RUNBOOK.md`](docs/RUNBOOK.md):
+  detection → triage → recovery → verification → post-incident.
+
+---
+
+## Automation improvements
+
+- **One-command environment preparation** — `scripts/bootstrap.{sh,ps1}` /
+  `make setup` (validate → build → start → verify).
+- **Automated environment validation** — `validate_env.py` checks tools, files,
+  ports, and validates the compose definition before anything starts.
+- **Deployment verification** — `smoke_test.py` probes every critical endpoint;
+  used by bootstrap, by `deploy.py` post-deploy, and inside CI against the freshly
+  built image.
+- **Stronger CI/CD** ([`ci.yml`](.github/workflows/ci.yml)):
+  1. **quality** — lint + unit tests on Node 18 & 20,
+  2. **build-and-verify** — build the Docker image, run it, and smoke-test it
+     before it is considered deployable.
+- **Dedicated security pipeline** ([`security.yml`](.github/workflows/security.yml))
+  runs on every push/PR **and weekly** to catch newly-disclosed CVEs.
+
+---
+
+## Application endpoints
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `GET` | `/` | Homepage — HTML interface with input form |
-| `GET` | `/user/:name` | Dynamic Route — Greets the user by name |
-| `POST` | `/submit` | Form Endpoint — Processes and returns input data |
-| `GET` | `/health` | Health Check — Returns system status and uptime |
-| `GET` | `/logs` | Logs View — View the health monitor logs directly in the browser |
+| `GET` | `/` | Homepage (feature-flagged UI via `NEW_UI_ENABLED`) |
+| `GET` | `/user/:name` | Dynamic route — greets the user |
+| `POST` | `/submit` | Processes and echoes submitted data |
+| `GET` | `/health` | Health check (status, env, uptime, timestamp) |
+| `GET` | `/logs` | View the health-monitor log in the browser |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/error` | Deliberate 500 (drives the alerting demo) |
 
 ---
 
-## Git Branching Strategy
+## Branching strategy
 
 | Branch | Purpose |
 |--------|---------|
 | `main` | Stable production code |
 | `dev` | Active development and testing |
 
-All changes are developed on `dev` and merged into `main` via Pull Request after passing CI.
+All changes are developed on `dev` and merged into `main` via Pull Request after
+the CI **and** Security workflows pass.
 
-## Visual Verification & Proof
+---
 
-### Blue-Green Environments Running
-Both environments (Blue and Green) running simultaneously on their respective ports, verified via the browser:
+## Screenshots
 
-![Blue and Green Environments](screenshots/image.png)
+### CI/CD & deployment
+| | |
+|---|---|
+| GitHub Actions CI success | ![CI](screenshots/github_actions_ci_success.png) |
+| Successful deployment | ![Deploy](screenshots/successful_deployment.png) |
+| Aborted/failed deployment | ![Bad deploy](screenshots/unsuccessful_deployment.png) |
+| Rollback output | ![Rollback](screenshots/rollback_output.png) |
+| Automated environment setup | ![Setup](screenshots/automated_environment_setup.png) |
+| Tests passing | ![Tests](screenshots/running_tests.png) |
 
-### Browser-Based Logs View
-The `/logs` endpoint allows for real-time viewing of the health monitor logs directly from the web interface:
-![Logs View](screenshots/logs-view.png)
+### Monitoring, logging & alerting
+| | |
+|---|---|
+| Grafana dashboard | ![Grafana](screenshots/grafana-dashboard.png) |
+| Kibana structured JSON logs | ![Kibana](screenshots/kibana-json-logs.png) |
+| Prometheus/Grafana alert firing | ![Alert firing](screenshots/grafana-rule-firing.png) |
+| Prometheus alerts page — `CriticalHighErrorRate` firing | ![Prometheus alert](screenshots/grafana-alerting.png) |
+| Alert (inactive) | ![Alert inactive](screenshots/grafana-inactive.png) |
+| Health monitor logs | ![Monitor](screenshots/running_monitor.png) |
+| Health log output (`logs/health.log`) | ![Health log](screenshots/monitoring_logs.png) |
 
-### Successful Form Submission
-The `/submit` endpoint correctly processing and returning the input data:
+### Application
+| | |
+|---|---|
+| Homepage / blue-green | ![App](screenshots/image.png) |
+| Form submission | ![Submit](screenshots/image-1.png) |
+| Dynamic route | ![Dynamic](screenshots/image-2.png) |
+| Health endpoint | ![Health](screenshots/image-3.png) |
+| Browser logs view | ![Logs](screenshots/logs-view.png) |
 
-![Form Submission Result](screenshots/image-1.png)
+### Security 
+![security_1](screenshots/security_1.png)
+![security_2](screenshots/security_2.png)
+![security_3](screenshots/security_3.png)
+![security_4](screenshots/security_4.png)
 
-### Dynamic Route Testing
-The dynamic `/user/:name` route correctly greeting the user based on the URL parameter:
+### Docker health 
+![docker_ps](screenshots/docker_ps.png)
 
-![Dynamic Route Greeting](screenshots/image-2.png)
-
-### Direct Health Check
-The `/health` endpoint returning a valid JSON status directly from the application instance:
-
-![Health Check Output](screenshots/image-3.png)

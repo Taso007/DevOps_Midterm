@@ -20,12 +20,23 @@ export MSYS_NO_PATHCONV=1   # keep Windows Git-Bash from mangling /paths
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 FAILURES=0
+WARNINGS=0
 section() { echo; echo "============================================================"; echo "  $1"; echo "============================================================"; }
 note()    { echo ">> $1"; }
 
 section "1/6  npm audit — dependency vulnerabilities (production)"
-if npm audit --omit=dev --audit-level=high; then
+# Capture output so we can tell a genuine vulnerability finding apart from a
+# registry/TLS failure (e.g. a corporate proxy or antivirus doing SSL
+# inspection), which npm otherwise reports with the same non-zero exit code.
+audit_out="$(npm audit --omit=dev --audit-level=high 2>&1)"; audit_rc=$?
+echo "$audit_out"
+if [ "$audit_rc" -eq 0 ]; then
   note "no high/critical production dependency vulnerabilities"
+elif printf '%s\n' "$audit_out" | grep -qiE \
+     'audit endpoint returned an error|unable to verify the first certificate|self[ -]signed certificate|request to .* failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|UNABLE_TO_VERIFY|SELF_SIGNED_CERT|network'; then
+  note "npm audit could NOT reach the registry (network/TLS error) — skipped, not a security failure."
+  note "the same dependencies are scanned offline by Trivy (step 5, package-lock.json)."
+  WARNINGS=$((WARNINGS+1))
 else
   note "npm audit reported high/critical vulnerabilities"; FAILURES=$((FAILURES+1))
 fi
@@ -75,7 +86,11 @@ fi
 
 section "Summary"
 if [ "$FAILURES" -eq 0 ]; then
-  echo "All security scans passed."
+  if [ "$WARNINGS" -gt 0 ]; then
+    echo "No security findings, but $WARNINGS check(s) could not run (see warnings above)."
+  else
+    echo "All security scans passed."
+  fi
 else
   echo "$FAILURES scan(s) reported findings. Review the output above."
   exit 1
