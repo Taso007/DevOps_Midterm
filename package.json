@@ -1,12 +1,15 @@
 {
   "name": "devops_midterm",
-  "version": "1.0.0",
-  "description": "DevOps Midterm Project",
+  "version": "2.0.0",
+  "description": "DevOps Final Project — CI/CD, IaC, Docker, observability, security & reliability automation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "proxy": "node proxy.js",
     "test": "jest",
-    "lint": "eslint ."
+    "test:ci": "jest --ci --runInBand",
+    "lint": "eslint .",
+    "audit:ci": "npm audit --audit-level=high"
   },
   "repository": {
     "type": "git",
@@ -16,7 +19,9 @@
   "license": "ISC",
   "dependencies": {
     "express": "^4.19.2",
-    "http-proxy": "^1.18.1"
+    "http-proxy": "^1.18.1",
+    "pino": "^9.4.0",
+    "prom-client": "^15.1.3"
   },
   "devDependencies": {
     "eslint": "^8.57.0",
